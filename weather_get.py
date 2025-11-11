@@ -19,7 +19,7 @@ client.retrieve(
             '2m_dewpoint_temperature',
         ],
         # A bounding box for the NYC area [North, West, South, East]
-        # This will give you data on a 0.25-degree grid
+        # This will give us data on a 0.25-degree grid
         'area': [
             41.0, -74.5,
             40.0, -73.5,
