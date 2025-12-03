@@ -116,3 +116,75 @@ plt.legend()
 plt.title("24-Hour Rollout Stability (Delta Method)")
 plt.savefig(os.path.join(config.OUTPUT_DIR, "rollout_check.png"))
 print("Done.")
+
+# ... [Previous imports and code remain the same] ...
+
+# 2. Robustness (Autoregressive Rollout with Delta)
+print("Running 24-hr Autoregressive Rollout check (Transformer vs FNO)...")
+start_idx = 100
+
+# Initialize independent starting states for both models
+# We clone them so modifications to one don't affect the other
+input_tf, _ = test_ds[start_idx]
+input_tf = input_tf.to(config.DEVICE).unsqueeze(0)
+input_fno = input_tf.clone()
+
+tf_rollout = []
+fno_rollout = []
+
+# Get starting absolute temp (Scaled)
+curr_temp_tf = input_tf[0, -1, 0].item()
+curr_temp_fno = input_fno[0, -1, 0].item()
+
+with torch.no_grad():
+    for i in range(24):
+        # --- A. TRANSFORMER STEP ---
+        pred_diff_tf = tf(input_tf).item()
+        curr_temp_tf = curr_temp_tf + pred_diff_tf
+        tf_rollout.append(curr_temp_tf)
+
+        # --- B. FNO STEP ---
+        pred_diff_fno = fno(input_fno).item()
+        curr_temp_fno = curr_temp_fno + pred_diff_fno
+        fno_rollout.append(curr_temp_fno)
+
+        # --- C. PREPARE NEXT INPUTS ---
+        # Get the "Real" next weather features (Wind, Pressure, etc.) from dataset
+        # We need the row at t+1. 
+        # Note: We use the ground truth for auxiliary features (Wind/Pressure)
+        # because we are not forecasting those, only Temperature.
+        next_real_input, _ = test_ds[start_idx + i + 1]
+        
+        # Create next row for Transformer (injecting TF prediction)
+        new_row_tf = next_real_input.to(config.DEVICE)[-1, :].clone()
+        new_row_tf[0] = curr_temp_tf # <--- Inject TF's specific hallucination
+        
+        # Create next row for FNO (injecting FNO prediction)
+        new_row_fno = next_real_input.to(config.DEVICE)[-1, :].clone()
+        new_row_fno[0] = curr_temp_fno # <--- Inject FNO's specific hallucination
+
+        # Update sliding windows
+        input_tf = torch.cat((input_tf[:, 1:, :], new_row_tf.view(1, 1, 5)), dim=1)
+        input_fno = torch.cat((input_fno[:, 1:, :], new_row_fno.view(1, 1, 5)), dim=1)
+
+# Plot Rollout
+plt.figure(figsize=(10, 6))
+
+# Get Ground Truth (Unscaled)
+actuals_rollout = y_real[start_idx:start_idx+24]
+
+# Unscale Predictions
+tf_rollout_real = np.array(tf_rollout) * STD + MEAN
+fno_rollout_real = np.array(fno_rollout) * STD + MEAN
+
+plt.plot(actuals_rollout, label='Actual Ground Truth', color='black', linewidth=2)
+plt.plot(tf_rollout_real, label='Transformer Rollout', linestyle='--', color='blue')
+plt.plot(fno_rollout_real, label='FNO Rollout', linestyle='-.', color='green')
+
+plt.legend()
+plt.title(f"24-Hour Autoregressive Stability Comparison\n(Start Date: {config.TEST_START_DATE} + {start_idx}h)")
+plt.xlabel("Hours into Future")
+plt.ylabel("Temperature (°C)")
+plt.grid(True, alpha=0.3)
+plt.savefig(os.path.join(config.OUTPUT_DIR, "rollout_compare_dual.png"))
+print("Saved rollout_compare_dual.png")
