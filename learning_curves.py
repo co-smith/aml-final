@@ -1,8 +1,13 @@
 """
 1) learning_curves.py (Lecture 23)
-Goal: diagnose bias vs variance.
+Goal: diagnose bias vs variance with fair comparison across all models.
 What to do: retrain the model using 20%, 40%, 60%, 80%, and 100% of the training data
 and plot Training RMSE and Validation RMSE for each run.
+
+IMPORTANT: All models use INPUT MASKING during training (50% of samples have t-0
+temperature zeroed out) to prevent them from learning trivial persistence shortcuts.
+This forces models to learn from wind, pressure, and historical temperature patterns.
+
 Why: if the training and validation curves converge we likely have high bias (need a better model).
 If there's a persistent gap we likely have high variance (need more data).
 This answers the rubric's "error analyses" requirement.
@@ -62,11 +67,16 @@ for size_pct in train_sizes:
 
     print(f"Training with {size_pct*100:.0f}% of data ({n_samples} samples)...")
 
+    # --- APPLY INPUT MASKING: Zero out t-0 temperature for 50% of training samples ---
+    X_train_masked = X_train_subset.copy()
+    mask_indices = np.random.choice(len(X_train_masked), size=int(len(X_train_masked) * 0.5), replace=False)
+    X_train_masked.loc[X_train_masked.index[mask_indices], 'temp_2m_t-0'] = 0.0
+
     # --- Linear Regression ---
     lr = LinearRegression()
-    lr.fit(X_train_subset, y_train_subset)
+    lr.fit(X_train_masked, y_train_subset)  # Train on MASKED data
 
-    # Predictions
+    # Predictions (on FULL data - no masking at inference)
     y_pred_train_lr = lr.predict(X_train_subset)
     y_pred_val_lr = lr.predict(X_val)
 
@@ -88,9 +98,9 @@ for size_pct in train_sizes:
         n_jobs=-1,
         verbosity=0
     )
-    xgb.fit(X_train_subset, y_train_subset)
+    xgb.fit(X_train_masked, y_train_subset)  # Train on MASKED data
 
-    # Predictions
+    # Predictions (on FULL data - no masking at inference)
     y_pred_train_xgb = xgb.predict(X_train_subset)
     y_pred_val_xgb = xgb.predict(X_val)
 
@@ -114,7 +124,7 @@ val_ds = WeatherDataset(start_date=config.VAL_START_DATE, end_date=config.VAL_EN
 val_loader = DataLoader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False)
 
 def train_dl_model(model, train_loader, val_loader, epochs=20):
-    """Train a deep learning model and return train/val RMSE"""
+    """Train a deep learning model with input masking and return train/val RMSE"""
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 
@@ -124,7 +134,13 @@ def train_dl_model(model, train_loader, val_loader, epochs=20):
         for X, y in train_loader:
             X, y = X.to(config.DEVICE), y.to(config.DEVICE)
 
-            # No input masking for fair comparison
+            # --- INPUT MASKING: Zero out t-0 temperature for 50% of batches ---
+            # This forces models to learn from wind, pressure, and history
+            # instead of just copying the most recent temperature
+            if np.random.rand() > 0.5:
+                # Shape: (Batch, Seq, Feat). Last seq (-1), First feat (0 is Temp)
+                X[:, -1, 0] = 0.0
+
             optimizer.zero_grad()
             loss = criterion(model(X), y)
             loss.backward()
