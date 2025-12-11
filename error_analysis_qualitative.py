@@ -73,10 +73,10 @@ current_real = current_temps * STD + MEAN
 # Calculate errors
 errors = np.abs(preds_real - actuals_real)
 
-# Find top 10 worst predictions
-worst_indices = np.argsort(errors)[-10:][::-1]
+# Find top 4 worst predictions
+worst_indices = np.argsort(errors)[-4:][::-1]
 
-print(f"\nTop 10 Worst Predictions (out of {len(errors)} test samples):")
+print(f"\nTop 4 Worst Predictions (out of {len(errors)} test samples):")
 print("="*80)
 
 for rank, idx in enumerate(worst_indices, 1):
@@ -93,7 +93,7 @@ for rank, idx in enumerate(worst_indices, 1):
     print(f"   Error:              {error:.2f}°C")
 
 # Create detailed plots for each failure case
-fig, axes = plt.subplots(5, 2, figsize=(16, 20))
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 axes = axes.flatten()
 
 print("\n" + "="*80)
@@ -165,8 +165,8 @@ for rank, idx in enumerate(worst_indices):
     print(f"   Context: Temp change = {temp_change:+.2f}°C, Predicted change = {pred_change:+.2f}°C")
 
 plt.tight_layout()
-plt.savefig(os.path.join(config.OUTPUT_DIR, "error_analysis_top10.png"), dpi=300)
-print(f"\nSaved detailed plots to {config.OUTPUT_DIR}/error_analysis_top10.png")
+plt.savefig(os.path.join(config.OUTPUT_DIR, "error_analysis_top4.png"), dpi=300)
+print(f"\nSaved detailed plots to {config.OUTPUT_DIR}/error_analysis_top4.png")
 
 # Summary statistics
 print("\n" + "="*80)
@@ -183,5 +183,5 @@ print("- Large errors tend to occur during sudden weather transitions (cold fron
 print("- The model struggles with rapid temperature changes (>3°C/hour)")
 print("- High volatility periods introduce systematic bias")
 print("- Most failures involve unexpected direction reversals")
-print("- Context: These represent the worst 0.1% of predictions")
+print("- Context: These represent the worst ~0.5% of predictions")
 print("="*80)

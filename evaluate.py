@@ -102,55 +102,7 @@ print(f"XGBoost:           {rmse_xgb:.2f}°C")
 print(f"Transformer:       {rmse_tf:.2f}°C")
 print(f"FNO:               {rmse_fno:.2f}°C")
 
-# Plot Forecast Comparison - ALL MODELS
-plt.figure(figsize=(14, 7))
-plt.plot(y_real[:150], label='Actual', color='black', linewidth=2.5, zorder=5)
-plt.plot(p_lr_real[:150], label=f'Linear Reg ({rmse_lr:.2f}°C)', linestyle=':', linewidth=1.5, alpha=0.8)
-plt.plot(p_xgb_real[:150], label=f'XGBoost ({rmse_xgb:.2f}°C)', linestyle='-.', linewidth=2, alpha=0.9)
-plt.plot(p_tf_real[:150], label=f'Transformer ({rmse_tf:.2f}°C)', linestyle='--', linewidth=1.5, alpha=0.8)
-plt.plot(p_fno_real[:150], label=f'FNO ({rmse_fno:.2f}°C)', linestyle='-', linewidth=2, alpha=0.9)
-plt.legend(loc='best', fontsize=10)
-plt.xlabel('Time Step (Hours)')
-plt.ylabel('Temperature (°C)')
-plt.title("Comprehensive Forecast Comparison: All Models")
-plt.grid(True, alpha=0.3)
-plt.savefig(os.path.join(config.OUTPUT_DIR, "forecast_compare.png"), dpi=300)
-print("\nSaved comprehensive forecast comparison to forecast_compare.png")
-
-# ========== ALTERNATIVE VISUALIZATIONS ==========
-print("\nGenerating alternative visualization options...")
-
-# Side-by-Side Comparison (Traditional ML vs Deep Learning)
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-
-# Left: Traditional ML
-ax1.plot(y_real[:150], label='Actual', color='black', linewidth=2.5, zorder=5)
-ax1.plot(p_lr_real[:150], label=f'Linear Reg ({rmse_lr:.2f}°C)', linestyle=':', linewidth=2, alpha=0.8)
-ax1.plot(p_xgb_real[:150], label=f'XGBoost ({rmse_xgb:.2f}°C)', linestyle='-.', linewidth=2, alpha=0.9)
-ax1.set_xlabel('Time Step (Hours)', fontsize=11)
-ax1.set_ylabel('Temperature (°C)', fontsize=11)
-ax1.set_title('Traditional ML Models', fontsize=13, fontweight='bold')
-ax1.legend(loc='best')
-ax1.grid(True, alpha=0.3)
-
-# Right: Deep Learning
-ax2.plot(y_real[:150], label='Actual', color='black', linewidth=2.5, zorder=5)
-ax2.plot(p_tf_real[:150], label=f'Transformer ({rmse_tf:.2f}°C)', linestyle='--', linewidth=2, alpha=0.8)
-ax2.plot(p_fno_real[:150], label=f'FNO ({rmse_fno:.2f}°C)', linestyle='-', linewidth=2, alpha=0.9)
-ax2.set_xlabel('Time Step (Hours)', fontsize=11)
-ax2.set_ylabel('Temperature (°C)', fontsize=11)
-ax2.set_title('Deep Learning Models', fontsize=13, fontweight='bold')
-ax2.legend(loc='best')
-ax2.grid(True, alpha=0.3)
-
-plt.suptitle('Side-by-Side Comparison', fontsize=15, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.savefig(os.path.join(config.OUTPUT_DIR, "forecast_compare_sidebyside.png"), dpi=300)
-print("  ✓ Saved Option 1: forecast_compare_sidebyside.png")
-
-
-
-# 2x2 Grid (Each Model Individually)
+# Forecast Comparison - 2x2 Grid
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
 models = [
@@ -173,64 +125,12 @@ for idx, (name, preds, rmse, color, linestyle) in enumerate(models):
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3)
 
-plt.suptitle('Individual Model Comparisons', fontsize=15, fontweight='bold', y=0.995)
+plt.suptitle('Model Forecast Comparison', fontsize=15, fontweight='bold', y=0.995)
 plt.tight_layout()
 plt.savefig(os.path.join(config.OUTPUT_DIR, "forecast_compare_grid.png"), dpi=300)
-print("  ✓ Saved Option 3: forecast_compare_grid.png")
+print("\nSaved forecast comparison to forecast_compare_grid.png")
 
-print("\nAll visualization options generated! Check outputs/ folder:")
-print("  - forecast_compare.png (original, all models)")
-print("  - forecast_compare_sidebyside.png (Option 1)")
-print("  - forecast_compare_grid.png (Option 3)")
-
-# 2. Robustness (Autoregressive Rollout with Delta)
-print("Running 24-hr Autoregressive Rollout check...")
-start_idx = 100
-current_input, _ = test_ds[start_idx]
-current_input = current_input.to(config.DEVICE).unsqueeze(0)
-tf_rollout = []
-
-# Get the starting absolute temp for the rollout
-current_abs_temp = current_input[0, -1, 0].item()
-
-with torch.no_grad():
-    for i in range(24):
-        # Predict Delta
-        pred_diff = tf(current_input).item()
-        
-        # Apply Delta to get new Absolute Temp
-        current_abs_temp = current_abs_temp + pred_diff
-        tf_rollout.append(current_abs_temp)
-        
-        # Prepare Next Input
-        next_real_input, _ = test_ds[start_idx + i + 1]
-        new_row = next_real_input.to(config.DEVICE)[-1, :].clone()
-        
-        # We must inject the PREDICTED temp (not the real one) into the input
-        # Note: current_abs_temp is scaled or unscaled? 
-        # The model operates in Scaled space. So we keep it scaled.
-        new_row[0] = current_abs_temp 
-        
-        current_input = torch.cat((current_input[:, 1:, :], new_row.view(1, 1, 5)), dim=1)
-
-# Plot Rollout
-plt.figure()
-# Get real actuals for next 24 steps
-_, real_deltas_seq = zip(*[test_ds[start_idx+i] for i in range(24)])
-# We have to reconstruct the "Real" rollout series for plotting comparison
-# This is tricky without the absolute values, so we approximate with y_real
-actuals_rollout = y_real[start_idx:start_idx+24]
-
-plt.plot(actuals_rollout, label='Actual')
-plt.plot(np.array(tf_rollout) * STD + MEAN, label='Transformer Rollout')
-plt.legend()
-plt.title("24-Hour Rollout Stability (Delta Method)")
-plt.savefig(os.path.join(config.OUTPUT_DIR, "rollout_check.png"))
-print("Done.")
-
-# ... [Previous imports and code remain the same] ...
-
-# 2. Robustness (Autoregressive Rollout with Delta) - ALL 4 MODELS
+# Autoregressive Rollout Stability Test (24 Hours)
 print("Running 24-hr Autoregressive Rollout check (All Models)...")
 start_idx = 100
 
@@ -344,7 +244,7 @@ plt.ylabel("Temperature (°C)", fontsize=11)
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.savefig(os.path.join(config.OUTPUT_DIR, "rollout_compare_all.png"), dpi=300)
-print("Saved rollout_compare_all.png (All 4 models)")
+print("\nSaved 24-hour rollout comparison to rollout_compare_all.png")
 
 # ========== DIRECTIONAL ACCURACY ANALYSIS (Classification Metrics) ==========
 print("\n--- Directional Accuracy: Treating Regression as Classification ---")
