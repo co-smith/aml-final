@@ -1,3 +1,11 @@
+import os
+# Fix threading issues that cause segfaults
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
@@ -5,25 +13,33 @@ from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt
 import config
 import utils
-import os
 from xgboost import XGBRegressor
+import joblib
 
 print("--- Step 3: Baselines & Assumptions ---")
 
 # Load Data directly for sklearn (bypassing the PyTorch loader for speed)
+print("Loading data...")
 df = pd.read_csv(config.PROCESSED_DATA_PATH, index_col=0, parse_dates=True)
+print(f"Data loaded: {df.shape}")
+
 y = df['target_temp_t+1']
 X = df.drop(columns=['target_temp_t+1'])
+print(f"X shape: {X.shape}, y shape: {y.shape}")
 
 # Splits
+print("Creating train/test splits...")
 X_train = X.loc[X.index < config.TEST_START_DATE]
 y_train = y.loc[y.index < config.TEST_START_DATE]
 X_test = X.loc[X.index >= config.TEST_START_DATE]
 y_test = y.loc[y.index >= config.TEST_START_DATE]
+print(f"Train size: {len(X_train)}, Test size: {len(X_test)}")
 
 # 1. Linear Regression
+print("Fitting Linear Regression...")
 lr = LinearRegression()
 lr.fit(X_train, y_train)
+print("Linear Regression fitted successfully!")
 y_pred_lr = lr.predict(X_test)
 
 # 2. Persistence (Naive)
@@ -42,6 +58,12 @@ xgb = XGBRegressor(
 
 xgb.fit(X_train, y_train)
 y_pred_xgb = xgb.predict(X_test)
+
+# Save trained models for later comparison
+joblib.dump(lr, os.path.join(config.CHECKPOINT_DIR, "linear_regression.pkl"))
+joblib.dump(xgb, os.path.join(config.CHECKPOINT_DIR, "xgboost.pkl"))
+print(f"\nSaved Linear Regression to {config.CHECKPOINT_DIR}/linear_regression.pkl")
+print(f"Saved XGBoost to {config.CHECKPOINT_DIR}/xgboost.pkl")
 
 # Unscale metrics
 MEAN, STD = utils.load_scaler_params()

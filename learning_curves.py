@@ -13,6 +13,14 @@ If there's a persistent gap we likely have high variance (need more data).
 This answers the rubric's "error analyses" requirement.
 """
 
+import os
+# Fix threading issues that cause segfaults on macOS
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
