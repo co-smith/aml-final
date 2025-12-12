@@ -35,10 +35,17 @@ X_test = X.loc[X.index >= config.TEST_START_DATE]
 y_test = y.loc[y.index >= config.TEST_START_DATE]
 print(f"Train size: {len(X_train)}, Test size: {len(X_test)}")
 
+# Apply Input Masking for fair comparison with deep learning models
+print("\nApplying input masking to training data (50% probability)...")
+X_train_masked = X_train.copy()
+mask_indices = np.random.choice(len(X_train_masked), size=int(len(X_train_masked) * 0.5), replace=False)
+X_train_masked.loc[X_train_masked.index[mask_indices], 'temp_2m_t-0'] = 0.0
+print(f"Masked {len(mask_indices)}/{len(X_train_masked)} samples (t-0 temperature set to 0)")
+
 # 1. Linear Regression
-print("Fitting Linear Regression...")
+print("\nFitting Linear Regression...")
 lr = LinearRegression()
-lr.fit(X_train, y_train)
+lr.fit(X_train_masked, y_train)  # Train on MASKED data
 print("Linear Regression fitted successfully!")
 y_pred_lr = lr.predict(X_test)
 
@@ -56,7 +63,7 @@ xgb = XGBRegressor(
     n_jobs=-1              # Use all CPU cores
 )
 
-xgb.fit(X_train, y_train)
+xgb.fit(X_train_masked, y_train)  # Train on MASKED data
 y_pred_xgb = xgb.predict(X_test)
 
 # Save trained models for later comparison
