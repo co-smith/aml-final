@@ -65,9 +65,8 @@ X = df.drop(columns=['target_temp_t+1'])
 # Full splits
 X_train_full = X.loc[X.index < config.TEST_START_DATE]
 y_train_full = y.loc[y.index < config.TEST_START_DATE]
-# Use TEST set (not validation) for consistency with baseline.py and evaluate.py
-X_val = X.loc[X.index >= config.TEST_START_DATE]
-y_val = y.loc[y.index >= config.TEST_START_DATE]
+X_val = X.loc[(X.index >= config.VAL_START_DATE) & (X.index < config.TEST_START_DATE)]
+y_val = y.loc[(y.index >= config.VAL_START_DATE) & (y.index < config.TEST_START_DATE)]
 
 for size_pct in train_sizes:
     n_samples = int(len(X_train_full) * size_pct)
@@ -129,8 +128,7 @@ print("Training Deep Learning Models (Transformer & FNO)...\n")
 
 # Load datasets
 train_ds_full = WeatherDataset(end_date=config.TRAIN_END_DATE)
-# Use TEST set (not validation) for consistency with baseline.py and evaluate.py
-val_ds = WeatherDataset(start_date=config.TEST_START_DATE)
+val_ds = WeatherDataset(start_date=config.VAL_START_DATE, end_date=config.VAL_END_DATE)
 val_loader = DataLoader(val_ds, batch_size=config.BATCH_SIZE, shuffle=False)
 
 def train_dl_model(model, train_loader, val_loader, epochs=20):
