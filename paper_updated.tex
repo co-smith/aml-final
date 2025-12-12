@@ -1,0 +1,202 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2020
+
+% ready for submission
+% \usepackage{neurips_2020}
+
+% to compile a preprint version, e.g., for submission to arXiv, add add the
+% [preprint] option:
+%     \usepackage[preprint]{neurips_2020}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+%     \usepackage[final]{neurips_2020}
+
+% to avoid loading the natbib package, add option nonatbib:
+     \usepackage[nonatbib,preprint]{neurips_2020}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{graphicx}       % images
+\usepackage{amsmath}        % math
+
+\title{Physics-Aware Time Series Forecasting: Breaking the Persistence Heuristic in Transformers and FNOs}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+\author{%
+  Corey Smith \\
+  Cornell Tech\\
+  \texttt{cs2593@cornell.edu} \\
+  \And
+  James Boudreau \\
+  Cornell Tech \\
+  \texttt{jdb457@cornell.edu} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Deep learning models for weather forecasting often converge to "lazy" heuristics, minimizing loss by acting as persistence models ($f(x_t) \approx x_t$) rather than learning atmospheric dynamics. In this study, we benchmark a Time Series Transformer and a Fourier Neural Operator (FNO) against traditional baselines (Linear Regression, XGBoost) on hourly temperature forecasting for New York City. Initial experiments revealed that models achieved low RMSE by exploiting temporal proximity to the most recent time step ($t_{-0}$), leading to poor generalization and divergence during autoregressive rollouts. To enforce physics-aware learning, we introduce two interventions: differential learning ($\Delta T$) and stochastic input masking applied uniformly across all models. These techniques successfully decoupled the models from the identity mapping heuristic. Our results demonstrate that FNO achieves the best test performance (0.40°C RMSE) with superior temporal generalization, while XGBoost exhibits a critical validation-test gap (0.34°C → 0.54°C) revealing exploitation of temporal proximity rather than learning of atmospheric physics. CKA analysis confirms divergent latent representations (0.49 similarity) between Transformer and FNO, evidencing distinct inductive biases—local temporal decay versus global spectral momentum.
+\end{abstract}
+
+\section{Introduction and Motivation}
+
+Weather forecasting is a quintessential spatiotemporal problem governed by chaotic dynamics. While Numerical Weather Prediction (NWP) relies on differential equations, deep learning offers a data-driven alternative. However, a common failure mode in time-series regression is the "persistence trap," where models learn to simply output the most recent observation. While this minimizes single-step Mean Squared Error (MSE), it fails to capture the underlying physics required for long-horizon forecasting.
+
+This project investigates this phenomenon by comparing two distinct architectures: the \textbf{Transformer}, which relies on attention mechanisms to model temporal dependencies, and the \textbf{Fourier Neural Operator (FNO)}, which learns resolution-invariant operators in the frequency domain. We propose and validate a training pipeline incorporating differential targeting and input masking that forces the models to learn valid physical dynamics, robust to autoregressive unrolling.
+
+\section{Method}
+
+To address the persistence failure mode described in the introduction, we implemented and compared four distinct approaches: Linear Regression and XGBoost representing traditional machine learning, and a Time Series Transformer and Fourier Neural Operator (FNO) representing deep learning architectures. Furthermore, we introduced a specialized regularization technique, Stochastic Input Masking, applied uniformly across all models to force learning of causal dynamics rather than reliance on simple extrapolation.
+
+\subsection{Model Architectures}
+
+\paragraph{Time Series Transformer (Data-Driven)}
+We utilized a standard Transformer Encoder architecture adapted for continuous time-series regression. Unlike Recurrent Neural Networks (RNNs) that process data sequentially, our Transformer processes the entire lookback window ($t_{-5} \dots t_{0}$) in parallel. The core of this architecture is the Multi-Head Self-Attention mechanism, which allows the model to dynamically weigh the importance of historical events—such as a sharp pressure drop three hours ago—regardless of their temporal distance. We project our 5-dimensional feature vector (Temperature, Dew Point, Pressure, Wind U, Wind V) into a latent space of dimension $d_{model}=64$ and inject sinusoidal positional encodings to preserve temporal order. The attention mechanism computes a weighted sum of values $V$ based on the compatibility of queries $Q$ and keys $K$:
+
+\begin{equation}
+    \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\end{equation}
+
+By employing multiple heads, the model jointly attends to information from different representation subspaces at different positions, defined as:
+
+\begin{equation}
+    \text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \dots, \text{head}_h)W^O
+\end{equation}
+
+\paragraph{Fourier Neural Operator (Physics-Inspired)}
+While Transformers model dependencies via pairwise attention in the temporal domain, we selected the Fourier Neural Operator (FNO) to model dependencies via global convolutions in the frequency domain. This choice is motivated by the physical reality that weather data is fundamentally composed of waves, such as diurnal cycles and seasonal trends. The core component of our architecture is the Spectral Convolution Layer. In this layer, we first transform the input time series $x(t)$ into its frequency domain representation using the Fast Fourier Transform ($\mathcal{F}$). We then apply a learnable complex weight matrix $R$ to the lower Fourier modes, which acts as a filter that allows the network to learn global patterns efficiently. Finally, we transform the signal back to the time domain:
+
+\begin{equation}
+    (\mathcal{K}x)(t) = \mathcal{F}^{-1}(R \cdot \mathcal{F}(x))(t)
+\end{equation}
+
+Intuitively, whereas the Transformer asks "which past time step is relevant?", the FNO asks "which frequencies drive the system?" allowing us to capture continuous physical dynamics that are resolution-independent.
+
+\subsection{Training Strategy: Breaking Persistence}
+
+Standard training approaches that minimize Mean Squared Error (MSE) on absolute temperature often fail because $T_{t+1} \approx T_t$, leading models to converge to a trivial identity mapping. We implemented two specific interventions to prevent this behavior. First, we employed \textbf{Differential Learning}. Instead of predicting the absolute state $T_{t+1}$, our models predict the delta $\Delta T = T_{t+1} - T_t$. This forces the model to learn the rate of change (the derivative) rather than the magnitude, effectively stationarizing the target variable.
+
+Second, we devised a domain-specific regularization technique called \textbf{Stochastic Input Masking}, applied uniformly across all models (Linear Regression, XGBoost, Transformer, FNO). We observed that the current temperature $T_t$ has an overwhelmingly high correlation with $T_{t+1}$, causing models to ignore auxiliary features like Wind and Pressure. To counter this, we apply a Bernoulli mask during training. For each training sample, there is a probability $p=0.5$ that the value of $T_t$ in the input sequence is effectively erased (set to the scaled mean of 0.0). Formally, for a random variable $r \sim U[0,1]$:
+
+\begin{equation}
+    x_{t, \text{temp}} =
+    \begin{cases}
+      0 & \text{if } r < 0.5 \\
+      x_{t, \text{temp}} & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+This artificially creates "missing data" scenarios, forcing models to reconstruct the next state using only historical context ($t_{-1} \dots t_{-5}$) and correlated atmospheric variables, ensuring learning of true physical dynamics rather than trivial persistence strategies.
+
+\section{Experimental Setup}
+
+\subsection{Dataset and Preprocessing}
+We utilized hourly ERA5 climate reanalysis data for the New York City region (40.7°N, -74.0°W) spanning the fourth quarter of 2023. Our feature set consists of five physics-relevant variables: 2m Temperature, 2m Dew Point Temperature, Surface Pressure, and the 10m U and V Wind Components. To maintain strict data hygiene and prevent data leakage, a critical flaw in many forecasting models, we adopted a chronological split. The \texttt{StandardScaler} is fitted only on the Training set (Oct 1 -- Nov 15). Both the Validation (Nov 15 -- Dec 1) and Test (Dec 1 -- Dec 31) sets are transformed using these frozen training statistics. The data is vectorized into sliding windows with a sequence length of 6 hours, resulting in 3D tensors of shape $(N, 6, 5)$.
+
+\subsection{Baselines}
+We compare our deep learning architectures against three classes of baselines to rigorously contextualize performance:
+\begin{enumerate}
+    \item \textbf{Persistence:} A naive baseline assuming $\Delta T = 0$ (i.e., $\hat{T}_{t+1} = T_t$). This serves as the lower bound for "lazy" heuristics.
+    \item \textbf{Linear Regression:} An interpretable parametric baseline trained on the flattened historical window with stochastic input masking.
+    \item \textbf{XGBoost (Gradient Boosting):} A non-parametric ensemble method known for state-of-the-art performance on tabular time-series data. We use 100 estimators with a max depth of 6 to capture non-linear feature interactions, trained with stochastic input masking for fair comparison.
+\end{enumerate}
+
+\section{Outcomes and Results}
+
+\subsection{Quantitative Performance}
+
+The deep learning models demonstrated superior generalization performance on the temporal holdout test set. Notably, \textbf{FNO achieved the lowest test RMSE}, outperforming both traditional baselines and the Transformer architecture.
+
+\begin{table}[h]
+  \caption{Test Set Performance (RMSE in $^\circ$C) - All models trained with 50\% stochastic input masking}
+  \label{tab:results}
+  \centering
+  \begin{tabular}{ll}
+    \toprule
+    Model & Test RMSE ($^\circ$C) \\
+    \midrule
+    Persistence Baseline & 0.58 \\
+    \textbf{FNO (w/ Masking)}     & \textbf{0.40} \\
+    Linear Regression (w/ Masking)    & 0.44 \\
+    Transformer (w/ Masking) & 0.49 \\
+    XGBoost (w/ Masking)     & 0.54 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{The Generalization Gap: XGBoost vs. FNO}
+
+While XGBoost achieved competitive validation performance (0.34°C RMSE on data immediately following the training period), it exhibited a critical failure in temporal generalization. Test performance degraded to 0.54°C RMSE on the temporal holdout set, representing a \textbf{0.20°C generalization gap}. This reveals that XGBoost exploits short-term autocorrelation and temporal proximity rather than learning robust atmospheric dynamics.
+
+Learning curve analysis further supports this interpretation. At 20-80\% training data fractions, XGBoost showed severe overfitting (validation RMSE $\sim$0.57-0.59°C). However, at 100\% data—when training extends closest to the validation boundary—performance suddenly improved to 0.34°C. This collapse indicates exploitation of temporal proximity rather than true generalization.
+
+In stark contrast, FNO maintained robust performance across temporal boundaries: 0.42°C validation → 0.40°C test (\textbf{-0.02°C gap}, actually improving on unseen future data). This demonstrates that the Fourier operator learns generalizable frequency-domain weather patterns rather than dataset-specific correlations. This stability is critical for operational forecasting where predictions must extend beyond the immediate training horizon.
+
+\subsection{Learning Curves: Bias-Variance Diagnosis}
+
+We trained all four models on 20\%, 40\%, 60\%, 80\%, and 100\% of available training data to diagnose model capacity. All models exhibited \textbf{high bias} (converged train/validation curves with gaps $<$ 0.08°C) rather than high variance:
+
+\begin{itemize}
+    \item \textbf{Linear Regression:} Validation RMSE plateaus at $\sim$0.49°C across all data fractions (gap: 0.05°C), indicating the linear hypothesis has reached capacity.
+    \item \textbf{XGBoost:} Shows severe overfitting at low data fractions (val: 0.57°C at 20-80\%) with sudden improvement at 100\% (val: 0.34°C, gap: 0.03°C), confirming temporal proximity exploitation.
+    \item \textbf{Transformer:} Gradual improvement from 0.66°C (20\%) to 0.55°C (100\%) with persistent gap (0.06°C), suggesting mild overfitting.
+    \item \textbf{FNO:} Steady improvement from 0.53°C (20\%) to 0.42°C (100\%) with largest gap (0.08°C), indicating the model could benefit from additional regularization.
+\end{itemize}
+
+The converged curves indicate these architectures have reached capacity limits with current features. Performance gains would require better feature engineering (e.g., pressure gradients, humidity interactions) or novel architectures rather than simply collecting more hourly ERA5 data.
+
+\subsection{Ablation Analysis: The Impact of Input Masking}
+
+We conducted an ablation study by retraining the Transformer both with and without stochastic masking regularization. The results validate masking as essential for autoregressive stability:
+
+\begin{itemize}
+    \item \textbf{Without masking:} Lower single-step test RMSE ($\sim$0.30°C) as the model exploits trivial persistence ($\hat{T}_{t+1} \approx T_t$), but catastrophic 24-hour rollout divergence with errors exceeding 5°C.
+    \item \textbf{With masking:} Slightly higher single-step RMSE (0.49°C) but stable 24-hour rollout tracking ground truth within 1°C.
+\end{itemize}
+
+This confirms that masking trades a small increase in single-step accuracy for dramatic improvements in physical validity and autoregressive stability—a critical requirement for multi-step forecasting.
+
+\subsection{Qualitative Error Analysis: Rollout Stability}
+
+To verify physical validity, we performed 24-hour closed-loop forecasts where each model's output is fed back as input. FNO demonstrates superior rollout stability, tracking ground truth temperature within $\pm$0.5°C over 24 hours. Linear Regression and XGBoost exhibit catastrophic divergence after 12 hours, with predictions deviating by 3-4°C and producing discontinuous "stair-case" artifacts inconsistent with smooth diurnal cycles. Transformer shows moderate drift but maintains reasonable trend tracking.
+
+FNO's stability stems from learning frequency-domain weather patterns through the Fourier operator, capturing the inertia and momentum of the atmospheric system. Tree-based methods, by contrast, memorize point-wise correlations that fail under recursive prediction. Saliency analysis reveals:
+
+\begin{itemize}
+    \item \textbf{Transformer:} Exhibits "temporal decay" behavior, relying heavily on immediate trajectory ($t_{-0} \dots t_{-2}$). Captures sharp transitions well but can be noisy.
+    \item \textbf{FNO:} Adopts a "global trend" strategy, down-weighting $t_{-0}$ in favor of deeper history and thermodynamic context (Dew Point, Pressure). Produces smoother curves respecting system inertia.
+\end{itemize}
+
+\subsection{Representation Analysis: CKA Similarity}
+
+Centered Kernel Alignment (CKA) analysis revealed a similarity score of \textbf{0.49} between the final hidden representations of the Transformer and FNO. This relatively low score indicates that despite similar validation RMSE performance (0.55°C vs 0.42°C), the models have learned fundamentally different internal representations of weather dynamics—one attention-based focusing on temporal dependencies, one spectral focusing on frequency-domain patterns.
+
+\subsection{Directional Accuracy}
+
+As a supplementary metric, we converted the regression output into a binary classification task (Temperature Up/Down). The FNO achieved a Directional Accuracy of 88\%, with high precision for detecting temperature drops, indicating it has successfully learned thermodynamic cooling principles beyond simple regression.
+
+\section{Conclusion}
+
+This study demonstrates that minimizing test RMSE alone is insufficient for validating physical models—temporal generalization and autoregressive stability are equally critical. While \textbf{XGBoost} provided strong validation performance (0.34°C), it failed to generalize to future temporal holdout data (0.54°C test) and could not learn the continuous laws of motion governing the system. By enforcing differential learning and uniform stochastic input masking across all models, we successfully trained a \textbf{Fourier Neural Operator} that achieves the best test performance (0.40°C RMSE) with superior generalization (-0.02°C val-test gap) and physically valid 24-hour autoregressive rollouts.
+
+The key insight is that physics-informed architectures like FNO trade marginal validation accuracy for significant gains in temporal robustness. The frequency-domain inductive bias enables learning of global spectral patterns—diurnal cycles, thermal inertia—that remain stable under distributional shift. This work validates that breaking the persistence heuristic through masking reveals the true physical reasoning capabilities of neural forecasters, with FNO emerging as the architecture best suited for learning generalizable atmospheric dynamics.
+
+\end{document}
